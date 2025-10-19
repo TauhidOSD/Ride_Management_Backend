@@ -1,7 +1,13 @@
 
+
 const express = require('express');
 const router = express.Router();
+const auth = require('../middleware/authMiddleware');
 
-router.get('/', (req, res) => res.status(501).json({ message: 'Not implemented yet' }));
+
+router.get('/me', auth, (req, res) => {
+  const user = req.user;
+  res.json({ user });
+});
 
 module.exports = router;

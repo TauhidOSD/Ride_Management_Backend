@@ -1,4 +1,4 @@
-
+// src/models/User.js
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
@@ -8,7 +8,15 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { type: String, enum: ['rider','driver','admin'], default: 'rider' },
   isBlocked: { type: Boolean, default: false },
-  isApproved: { type: Boolean, default: false }, // for driver approval by admin
+  isApproved: { type: Boolean, default: false }, 
+  isOnline: { type: Boolean, default: false }, 
+  emergencyContacts: [
+    {
+      name: String,
+      phone: String,
+      relation: String,
+    }
+  ],
   vehicle: {
     plate: { type: String, default: '' },
     model: { type: String, default: '' },

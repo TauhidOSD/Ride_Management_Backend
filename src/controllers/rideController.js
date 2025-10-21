@@ -1,5 +1,5 @@
 
-const Ride = require('../models/Ride');
+const Ride = require('../models/rideModel');
 const User = require('../models/User');
 
 const requestRide = async (req, res) => {

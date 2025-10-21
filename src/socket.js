@@ -1,7 +1,7 @@
 // src/socket.js
 const { Server } = require('socket.io');
 const socketAuth = require('./utils/socketAuth');
-const Ride = require('./models/Ride');
+const Ride = require('./models/rideModel');
 const User = require('./models/User');
 
 function setupSocket(server) {

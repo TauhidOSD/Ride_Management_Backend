@@ -1,18 +1,20 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const auth = require('../middleware/authMiddleware');
-const role = require('../middleware/roleMiddleware');
-const { requestRide, listRides, getRide, acceptRide, updateRideStatus } = require('../controllers/rideController');
+const Ride = require("../models/Ride");
 
-// Rider requests
-router.post('/', auth, role('rider'), requestRide);
+// Create a new ride booking
+router.post("/book", async (req, res) => {
+  try {
+    const { pickup, destination, date, time } = req.body;
 
-// Listing (rider/driver/admin)
-router.get('/', auth, listRides);
-router.get('/:id', auth, getRide);
+    const newRide = new Ride({ pickup, destination, date, time });
+    await newRide.save();
 
-// Driver actions
-router.post('/:id/accept', auth, role('driver'), acceptRide);
-router.post('/:id/status', auth, updateRideStatus);
+    res.status(201).json({ message: "Ride booked successfully", ride: newRide });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 module.exports = router;

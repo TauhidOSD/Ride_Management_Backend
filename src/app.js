@@ -24,6 +24,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/rides', rideRoutes);
 
 
+
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 

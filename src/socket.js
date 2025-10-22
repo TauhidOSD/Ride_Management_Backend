@@ -159,4 +159,66 @@ function setupSocket(server) {
   return io;
 }
 
-module.exports = { setupSocket };
+
+let io;
+
+function initSocket(server) {
+  io = new Server(server, {
+    cors: { origin: '*', methods: ['GET', 'POST'] },
+  });
+
+  io.on('connection', (socket) => {
+    console.log('Socket connected', socket.id);
+
+    // When a rider emits ride:request (client-side), broadcast to drivers
+    socket.on('ride:request', async (payload, ack) => {
+      try {
+        // payload should include rideId, pickup, destination, fare etc.
+        console.log('ride:request payload', payload);
+
+        // broadcast to all connected sockets that consider themselves drivers
+        // If you track roles, broadcast only to driver room. For now broadcast to all
+        io.emit('ride:new', payload);
+
+        if (ack) ack({ ok: true });
+      } catch (err) {
+        console.error('ride:request handling error', err);
+        if (ack) ack({ ok: false, error: err.message });
+      }
+    });
+
+    // Driver accepts from client via socket
+    socket.on('ride:accept', async ({ rideId, driverId }, ack) => {
+      try {
+        if (!rideId) return ack?.({ ok: false, message: 'rideId required' });
+
+        // update DB
+        const ride = await Ride.findById(rideId);
+        if (!ride) return ack?.({ ok: false, message: 'Ride not found' });
+
+        ride.status = 'accepted';
+        if (driverId) ride.driver = driverId;
+        await ride.save();
+
+        // emit to specific rider(s) & drivers about update
+        io.emit('ride:updated', { rideId: ride._id, status: ride.status, driver: ride.driver });
+        // Optionally notify rider only: io.to(riderSocketId).emit(...)
+
+        if (ack) ack({ ok: true, ride });
+      } catch (err) {
+        console.error('ride:accept error', err);
+        if (ack) ack({ ok: false, message: err.message });
+      }
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Socket disconnected', socket.id);
+    });
+  });
+
+  return io;
+}
+
+
+
+module.exports = { setupSocket, initSocket, getIo: () => io  };

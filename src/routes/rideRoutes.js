@@ -28,4 +28,25 @@ router.post('/book', async (req, res) => {
   }
 });
 
+
+// PATCH /api/rides/:id/status
+router.patch('/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, driverId } = req.body; // driverId optional
+    const ride = await Ride.findById(id);
+    if (!ride) return res.status(404).json({ message: 'Ride not found' });
+
+    ride.status = status || ride.status;
+    if (driverId) ride.driver = driverId;
+    await ride.save();
+
+
+       return res.json({ message: 'Status updated', ride });
+  } catch (err) {
+    console.error('PATCH /api/rides/:id/status error:', err);
+    return res.status(500).json({ message: err.message || 'Server error' });
+  }
+});
+
 module.exports = router;

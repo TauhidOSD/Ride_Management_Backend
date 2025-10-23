@@ -49,4 +49,38 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
+
+// GET /api/rides/paginated?page=1&limit=10&role=driver&search=...&status=...
+router.get('/paginated', async (req, res) => {
+  const page = parseInt(req.query.page) || 1
+  const limit = parseInt(req.query.limit) || 10
+  const role = req.query.role
+  const search = req.query.search
+  const status = req.query.status
+
+  const filter = {}
+  if (role === 'driver') filter.driver = { $exists: true } // adjust
+  if (role === 'rider') filter.rider = { $exists: true }
+  if (status) filter.status = status
+  if (search) {
+    const regex = new RegExp(search, 'i')
+    filter.$or = [
+      { 'pickup.address': regex },
+      { 'destination.address': regex },
+      { _id: search } // maybe id exact
+    ]
+  }
+
+  const total = await Ride.countDocuments(filter)
+  const rides = await Ride.find(filter)
+    .sort({ createdAt: -1 })
+    .skip((page-1)*limit)
+    .limit(limit)
+    .lean()
+  res.json({ rides, total, page, limit })
+})
+
+
+
+
 module.exports = router;

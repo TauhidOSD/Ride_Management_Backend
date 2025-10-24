@@ -1,0 +1,61 @@
+// src/controllers/analyticsController.js
+const Ride = require('../models/rideModel')
+
+/**
+ * GET /api/analytics/earnings?range=monthly&driverId=...
+ * range: daily | weekly | monthly  (default: monthly)
+ * optional driverId to filter per-driver
+ */
+async function getEarnings(req, res) {
+  try {
+    const range = (req.query.range || 'monthly').toLowerCase()
+    const driverId = req.query.driverId
+    // pipeline grouping format by range
+    let dateTruncUnit = 'month'
+    if (range === 'daily') dateTruncUnit = 'day'
+    else if (range === 'weekly') dateTruncUnit = 'week'
+    else dateTruncUnit = 'month'
+
+    const match = {}
+    // only completed rides count towards earnings
+    match.status = 'completed'
+    if (driverId) match.driver = driverId
+
+    // optional date filter: ?from=2025-01-01&to=2025-02-01
+    if (req.query.from || req.query.to) {
+      match.createdAt = {}
+      if (req.query.from) match.createdAt.$gte = new Date(req.query.from)
+      if (req.query.to) match.createdAt.$lte = new Date(req.query.to)
+    }
+
+    const pipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: {
+            $dateTrunc: { date: '$createdAt', unit: dateTruncUnit },
+          },
+          totalRevenue: { $sum: { $ifNull: ['$fare', 0] } },
+          rideCount: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+      {
+        $project: {
+          period: '$_id',
+          totalRevenue: 1,
+          rideCount: 1,
+          _id: 0,
+        },
+      },
+    ]
+
+    const results = await Ride.aggregate(pipeline).allowDiskUse(true)
+    return res.json({ ok: true, data: results })
+  } catch (err) {
+    console.error('getEarnings error', err)
+    return res.status(500).json({ ok: false, message: 'Server error' })
+  }
+}
+
+module.exports = { getEarnings }

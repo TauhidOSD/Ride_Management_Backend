@@ -1,4 +1,4 @@
-
+const analyticsRoutes = require('./routes/analyticsRoutes')
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -22,6 +22,7 @@ app.use(morgan('dev'));
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/rides', rideRoutes);
+app.use('/api/analytics', analyticsRoutes)
 
 
 

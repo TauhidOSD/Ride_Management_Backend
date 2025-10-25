@@ -7,5 +7,6 @@ const { getEarnings } = require('../controllers/analyticsController')
 
 // For now, allow admin or authenticated users to fetch (you can restrict)
 router.get('/earnings', auth, role('admin'), getEarnings)
+//router.get('/earnings',  getEarnings)
 
 module.exports = router

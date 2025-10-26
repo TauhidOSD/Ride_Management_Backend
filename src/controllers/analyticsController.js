@@ -1,11 +1,6 @@
-// src/controllers/analyticsController.js
 const Ride = require('../models/rideModel')
 
-/**
- * GET /api/analytics/earnings?range=monthly&driverId=...
- * range: daily | weekly | monthly  (default: monthly)
- * optional driverId to filter per-driver
- */
+
 async function getEarnings(req, res) {
   try {
     const range = (req.query.range || 'monthly').toLowerCase()
@@ -58,4 +53,35 @@ async function getEarnings(req, res) {
   }
 }
 
-module.exports = { getEarnings }
+
+
+  async function getSummary(req, res)  {
+  try {
+    const totalRides = await Ride.countDocuments();
+    const completedRides = await Ride.countDocuments({ status: "completed" });
+
+    const totalRevenueData = await Ride.aggregate([
+      { $match: { status: "completed" } },
+      { $group: { _id: null, total: { $sum: "$fare" } } }
+    ]);
+    const totalRevenue = totalRevenueData[0]?.total || 0;
+
+    const activeDrivers = await User.countDocuments({ role: "driver" });
+    const activeUsers = await User.countDocuments({ role: "user" });
+
+    res.json({
+      totalRides,
+      completedRides,
+      totalRevenue,
+      activeDrivers,
+      activeUsers
+    });
+    
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+module.exports = { getEarnings, getSummary }

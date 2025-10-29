@@ -1,6 +1,52 @@
 
 const Ride = require('../models/rideModel');
 const User = require('../models/User');
+const { getIo } = require('../socket')
+
+
+const bookRide = async (req, res) => {
+  try {
+    const user = req.user // ensure auth middleware used in route
+    const { pickup, destination, fare, paymentMethod } = req.body
+
+    const ride = new Ride({
+      rider: user._id,
+      pickup,
+      destination,
+      fare: fare ?? 0,
+      paymentMethod: paymentMethod ?? 'cash',
+      status: 'requested',
+    })
+
+    await ride.save()
+
+    // emit to drivers room (so online drivers receive it)
+    try {
+      const io = getIo()
+      if (io) {
+        io.to('drivers').emit('ride:new', {
+          rideId: ride._id.toString(),
+          pickup: ride.pickup,
+          destination: ride.destination,
+          fare: ride.fare,
+          createdAt: ride.createdAt,
+        })
+      } else {
+        console.warn('Socket IO not initialized; ride:new not emitted')
+      }
+    } catch (emitErr) {
+      console.error('Emit ride:new failed', emitErr)
+    }
+
+    return res.status(201).json({ ok: true, rideId: ride._id })
+  } catch (err) {
+    console.error('bookRide error', err)
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+}
+
+
+
 
 const requestRide = async (req, res) => {
   const { pickup, destination, fare, paymentMethod } = req.body;
@@ -102,4 +148,4 @@ const updateRideStatus = async (req, res) => {
   res.json({ ride });
 };
 
-module.exports = { requestRide, listRides, getRide, acceptRide, updateRideStatus };
+module.exports = { requestRide, listRides, getRide, acceptRide, updateRideStatus, bookRide };

@@ -124,28 +124,79 @@ const acceptRide = async (req, res) => {
 };
 
 const updateRideStatus = async (req, res) => {
-  const { status } = req.body;
-  const ride = await Ride.findById(req.params.id);
-  if (!ride) return res.status(404).json({ message: 'Ride not found' });
+  try {
+    const rideId = req.params.rideId || req.body.rideId;
+    const { status, driverId } = req.body;
 
-  // Allowed transitions — you can expand/validate transitions more strictly
-  const allowed = ['accepted','picked_up','in_transit','completed','cancelled'];
-  if (!allowed.includes(status)) return res.status(400).json({ message: 'Invalid status' });
-
-  // Only driver assigned or admin can update to these statuses (except cancel maybe by rider)
-  if (req.user.role === 'driver') {
-    if (!ride.driver || ride.driver.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Only assigned driver can update status' });
+    if (!rideId || !status) {
+      return res.status(400).json({ ok:false, message:'rideId and status are required' });
     }
-  } else if (req.user.role === 'rider') {
-    // rider can cancel if still requested/matched maybe
-    if (status !== 'cancelled') return res.status(403).json({ message: 'Rider cannot set this status' });
-    if (ride.rider.toString() !== req.user._id.toString()) return res.status(403).json({ message: 'Forbidden' });
+
+    const ride = await Ride.findById(rideId);
+    if (!ride) return res.status(404).json({ ok:false, message:'Ride not found' });
+
+    // optional: permission checks (only driver or admin)
+    if (driverId) ride.driver = driverId;
+    ride.status = status;
+    await ride.save();
+
+    // emit realtime updates
+    const io = getIo();
+    if (io) {
+      // notify the rider
+      io.to(`user:${ride.rider.toString()}`).emit('ride:statusUpdated', {
+        rideId: ride._id.toString(),
+        status,
+        ride,
+      });
+
+      // notify the driver (if assigned)
+      if (ride.driver) {
+        io.to(`user:${ride.driver.toString()}`).emit('ride:statusUpdated', {
+          rideId: ride._id.toString(),
+          status,
+          ride,
+        });
+      }
+
+      // notify drivers room (so incoming lists remove/refresh)
+      io.to('drivers').emit('ride:updated', {
+        rideId: ride._id.toString(),
+        status,
+        driver: ride.driver ? ride.driver.toString() : null,
+      });
+    } else {
+      console.warn('updateRideStatus: io not initialized');
+    }
+
+    return res.json({ ok:true, ride });
+  } catch (err) {
+    console.error('updateRideStatus error', err);
+    return res.status(500).json({ ok:false, message:'Server error' });
   }
-  ride.status = status;
-  ride.updatedAt = new Date();
-  await ride.save();
-  res.json({ ride });
-};
+}
+//   const { status } = req.body;
+//   const ride = await Ride.findById(req.params.id);
+//   if (!ride) return res.status(404).json({ message: 'Ride not found' });
+
+//   // Allowed transitions — you can expand/validate transitions more strictly
+//   const allowed = ['accepted','picked_up','in_transit','completed','cancelled'];
+//   if (!allowed.includes(status)) return res.status(400).json({ message: 'Invalid status' });
+
+//   // Only driver assigned or admin can update to these statuses (except cancel maybe by rider)
+//   if (req.user.role === 'driver') {
+//     if (!ride.driver || ride.driver.toString() !== req.user._id.toString()) {
+//       return res.status(403).json({ message: 'Only assigned driver can update status' });
+//     }
+//   } else if (req.user.role === 'rider') {
+//     // rider can cancel if still requested/matched maybe
+//     if (status !== 'cancelled') return res.status(403).json({ message: 'Rider cannot set this status' });
+//     if (ride.rider.toString() !== req.user._id.toString()) return res.status(403).json({ message: 'Forbidden' });
+//   }
+//   ride.status = status;
+//   ride.updatedAt = new Date();
+//   await ride.save();
+//   res.json({ ride });
+// };
 
 module.exports = { requestRide, listRides, getRide, acceptRide, updateRideStatus, bookRide };

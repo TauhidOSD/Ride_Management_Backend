@@ -5,7 +5,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 require('express-async-errors'); 
 
-
+const emergencyRoutes = require('./routes/emergencyRoutes');
 const authRoutes = require('./routes/authRoutes'); 
 const userRoutes = require('./routes/userRoutes'); 
 const rideRoutes = require('./routes/rideRoutes'); 
@@ -23,6 +23,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/rides', rideRoutes);
 app.use('/api/analytics', analyticsRoutes)
+app.use('/api/emergency', emergencyRoutes);
 
 
 

@@ -1,50 +1,57 @@
 // src/socket.js
 const { Server } = require('socket.io');
-const socketAuth = require('./utils/socketAuth');
+const socketAuth = require('./utils/socketAuth'); // must set socket.user
 const Ride = require('./models/rideModel');
 const User = require('./models/User');
 
-function setupSocket(server) {
-  const io = new Server(server, {
+let io = null;
+
+function initSocket(server) {
+  if (io) return io; // avoid multiple inits
+
+  io = new Server(server, {
     cors: {
-      origin: '*', // dev only: change to frontend origin in production
-      methods: ['GET','POST'],
+      origin: '*', // dev only — production: set frontend origin
+      methods: ['GET', 'POST'],
+    },
+  });
+
+  // middleware for auth — expects socketAuth to set socket.user
+  io.use(async (socket, next) => {
+    try {
+      await socketAuth(socket, next);
+    } catch (err) {
+      console.error('socket auth error', err);
+      return next(err);
     }
   });
 
-  // middleware for auth
-  io.use(async (socket, next) => {
-    await socketAuth(socket, next);
-  });
-
   io.on('connection', (socket) => {
-    const user = socket.user;
-    console.log(`Socket connected: ${socket.id} user: ${user.email} role: ${user.role}`);
+    const user = socket.user || {};
+    console.log(`Socket connected: ${socket.id} user: ${user.email ?? 'unknown'} role: ${user.role ?? 'unknown'}`);
 
     // join personal room for direct messages
-    socket.join(`user:${user._id}`);
+    if (user._id) socket.join(`user:${user._id}`);
 
-    // if driver, optionally join drivers room (global) or location-specific rooms later
-    if (user.role === 'driver') {
+    // if driver, join drivers room and mark online
+    if (user.role === 'driver' && user._id) {
       socket.join('drivers');
       console.log(`Driver ${user._id} joined drivers room`);
-      // mark driver online
-      User.findByIdAndUpdate(user._id, { isOnline: true }).catch(err => console.error(err));
+      User.findByIdAndUpdate(user._id, { isOnline: true }).catch(err => console.error('set driver online err', err));
     }
 
     // handle driver toggling offline
     socket.on('driver:offline', async () => {
-      if (user.role === 'driver') {
+      if (user.role === 'driver' && user._id) {
         socket.leave('drivers');
-        await User.findByIdAndUpdate(user._id, { isOnline: false });
+        await User.findByIdAndUpdate(user._id, { isOnline: false }).catch(()=>{});
         io.to(`user:${user._id}`).emit('driver:status', { isOnline: false });
       }
     });
 
-    // rider requests a ride via socket (optional — also possible via REST)
+    // Rider -> request ride (create in DB and notify drivers)
     socket.on('ride:request', async (payload, ack) => {
       try {
-        // payload expected: { pickup, destination, fare, paymentMethod }
         const ride = new Ride({
           rider: user._id,
           pickup: payload.pickup,
@@ -55,7 +62,7 @@ function setupSocket(server) {
         });
         await ride.save();
 
-        // emit to drivers room: new ride (in a real app filter by location)
+        // emit to drivers (or better: to drivers in area)
         io.to('drivers').emit('ride:new', {
           rideId: ride._id,
           pickup: ride.pickup,
@@ -64,7 +71,6 @@ function setupSocket(server) {
           createdAt: ride.createdAt,
         });
 
-        // ack back to rider
         if (typeof ack === 'function') ack({ ok: true, rideId: ride._id });
       } catch (err) {
         console.error('ride:request error', err);
@@ -72,47 +78,45 @@ function setupSocket(server) {
       }
     });
 
-    // driver accepts via socket
-    socket.on('ride:accept', async ({ rideId }, ack) => {
+    // Driver accepts via socket
+    socket.on('ride:accept', async ({ rideId, driverId }, ack) => {
       try {
+        if (!rideId) return ack?.({ ok: false, message: 'rideId required' });
+
         const ride = await Ride.findById(rideId);
         if (!ride) return ack?.({ ok: false, message: 'Ride not found' });
-        if (ride.driver && ride.driver.toString() !== user._id.toString()) {
+
+        // lock check: if already assigned and not this driver
+        if (ride.driver && ride.driver.toString() !== (driverId || user._id).toString()) {
           return ack?.({ ok: false, message: 'Already assigned' });
         }
 
-        // check driver approval & online (we assume user is driver)
-        const driver = await User.findById(user._id);
-        if (!driver.isApproved) return ack?.({ ok: false, message: 'Driver not approved' });
-        if (!driver.isOnline) return ack?.({ ok: false, message: 'Driver offline' });
-
-        ride.driver = user._id;
+        // set driver & status
+        ride.driver = driverId || user._id;
         ride.status = 'accepted';
         await ride.save();
 
-        // notify rider via their room
+        // Notify rider specifically
         io.to(`user:${ride.rider}`).emit('ride:accepted', {
           rideId: ride._id,
           driver: {
-            id: driver._id,
-            name: driver.name,
-            phone: driver.phone,
-            vehicle: driver.vehicle
+            id: ride.driver,
+            // optionally fetch driver details if needed
           },
           status: ride.status
         });
 
-        // optionally notify other drivers to ignore this one
+        // Notify other drivers to remove
         io.to('drivers').emit('ride:removed', { rideId: ride._id });
 
-        ack?.({ ok: true, rideId: ride._id, driverId: driver._id });
+        if (typeof ack === 'function') ack({ ok: true, rideId: ride._id, driverId: ride.driver });
       } catch (err) {
         console.error('ride:accept error', err);
-        ack?.({ ok: false, message: err.message });
+        if (typeof ack === 'function') ack({ ok: false, message: err.message });
       }
     });
 
-    // driver/rider update ride status
+    // Driver/rider update ride status (PATCH style via socket)
     socket.on('ride:status', async ({ rideId, status }, ack) => {
       try {
         const ride = await Ride.findById(rideId);
@@ -136,89 +140,52 @@ function setupSocket(server) {
         io.to(`user:${ride.rider}`).emit('ride:statusUpdated', { rideId: ride._id, status });
         if (ride.driver) io.to(`user:${ride.driver}`).emit('ride:statusUpdated', { rideId: ride._id, status });
 
-        ack?.({ ok:true });
+        if (typeof ack === 'function') ack({ ok:true });
       } catch (err) {
         console.error('ride:status error', err);
-        ack?.({ ok:false, message: err.message });
+        if (typeof ack === 'function') ack({ ok:false, message: err.message });
       }
     });
 
-    // handle disconnect
+    // Driver -> share live location
+    socket.on('driver:location', async (payload) => {
+      try {
+        // payload should include rideId, lat, lng, optionally riderId
+        const { rideId, lat, lng, speed, heading, riderId } = payload || {};
+        if (!rideId) return;
+
+        // optional: find ride to get riderId if not provided
+        let targetRiderId = riderId;
+        if (!targetRiderId) {
+          const ride = await Ride.findById(rideId).select('rider driver');
+          if (ride) targetRiderId = ride.rider;
+        }
+        if (!targetRiderId) return;
+
+        io.to(`user:${targetRiderId}`).emit('driver:location', {
+          rideId,
+          lat,
+          lng,
+          speed: speed ?? null,
+          heading: heading ?? null,
+          ts: Date.now(),
+        });
+      } catch (err) {
+        console.error('driver:location handler error', err);
+      }
+    });
+
+    // clean up on disconnect
     socket.on('disconnect', async (reason) => {
       console.log(`Socket disconnected: ${socket.id} reason: ${reason}`);
-      if (user.role === 'driver') {
-        // set offline in DB
+      if (user.role === 'driver' && user._id) {
         await User.findByIdAndUpdate(user._id, { isOnline: false }).catch(()=>{});
-        // broadcast driver offline if needed
         io.to('drivers').emit('driver:offline', { driverId: user._id });
       }
     });
   });
 
-  // expose io if needed
   return io;
 }
 
-
-let io;
-
-function initSocket(server) {
-  io = new Server(server, {
-    cors: { origin: '*', methods: ['GET', 'POST'] },
-  });
-
-  io.on('connection', (socket) => {
-    console.log('Socket connected', socket.id);
-
-    // When a rider emits ride:request (client-side), broadcast to drivers
-    socket.on('ride:request', async (payload, ack) => {
-      try {
-        // payload should include rideId, pickup, destination, fare etc.
-        console.log('ride:request payload', payload);
-
-        // broadcast to all connected sockets that consider themselves drivers
-        // If you track roles, broadcast only to driver room. For now broadcast to all
-        io.emit('ride:new', payload);
-
-        if (ack) ack({ ok: true });
-      } catch (err) {
-        console.error('ride:request handling error', err);
-        if (ack) ack({ ok: false, error: err.message });
-      }
-    });
-
-    // Driver accepts from client via socket
-    socket.on('ride:accept', async ({ rideId, driverId }, ack) => {
-      try {
-        if (!rideId) return ack?.({ ok: false, message: 'rideId required' });
-
-        // update DB
-        const ride = await Ride.findById(rideId);
-        if (!ride) return ack?.({ ok: false, message: 'Ride not found' });
-
-        ride.status = 'accepted';
-        if (driverId) ride.driver = driverId;
-        await ride.save();
-
-        // emit to specific rider(s) & drivers about update
-        io.emit('ride:updated', { rideId: ride._id, status: ride.status, driver: ride.driver });
-        // Optionally notify rider only: io.to(riderSocketId).emit(...)
-
-        if (ack) ack({ ok: true, ride });
-      } catch (err) {
-        console.error('ride:accept error', err);
-        if (ack) ack({ ok: false, message: err.message });
-      }
-    });
-
-    socket.on('disconnect', () => {
-      console.log('Socket disconnected', socket.id);
-    });
-  });
-
-  return io;
-}
-
-
-
-module.exports = { setupSocket, initSocket, getIo: () => io  };
+module.exports = { initSocket, getIo: () => io };

@@ -1,8 +1,16 @@
-// src/server.js
 const http = require('http');
 const app = require('./app');
 const { initSocket } = require('./socket');
 const connectDB = require('./config/db');
+const cors = require('cors'); 
+
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'https://ride-frontend-mwd6ozchq-komolar-friend.vercel.app'
+  ],
+  credentials: true
+}));
 
 (async () => {
   await connectDB(process.env.MONGO_URI);
